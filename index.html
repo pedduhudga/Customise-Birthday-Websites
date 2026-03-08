@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Birthday Website Builder</title>
+    <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -173,7 +174,9 @@
                 <!-- Preview Player -->
                 <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
                     <label style="margin-bottom: 5px; font-size: 0.8rem;">🎵 Audio Preview (Test before downloading):</label>
-                    <audio id="audioPreview" controls style="width: 100%; height: 40px;"></audio>
+                    <audio id="audioPreview" controls style="width: 100%; height: 40px;">
+                        <source id="audioPreviewSource" src="" type="audio/mpeg">
+                    </audio>
                 </div>
             </div>
             <div class="form-group">
@@ -815,26 +818,36 @@ class App {
 
         // Audio Error Handling & Retry Logic
         const audio = document.getElementById('bgMusic');
+        const sourceEl = document.getElementById('bgMusicSrc');
         audio.addEventListener('error', (e) => {
             console.error("Audio Error:", e);
             
-            const currentSrc = audio.src;
+            const currentSrc = (sourceEl && sourceEl.src) || audio.currentSrc || audio.src;
             const idFromSrc = currentSrc.match(/(?:[?&]id=|\/d\/)([-_\w]+)/);
             const fileId = idFromSrc && idFromSrc[1] ? idFromSrc[1] : "";
             const rkFromSrc = currentSrc.match(/[?&]resourcekey=([^&]+)/);
             const resourceKey = rkFromSrc && rkFromSrc[1] ? `&resourcekey=${rkFromSrc[1]}` : "";
             if (fileId && currentSrc.includes('drive.usercontent.google.com')) {
-                audio.src = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                const retrySrc = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                if (sourceEl) sourceEl.src = retrySrc;
+                else audio.src = retrySrc;
+                audio.load();
                 audio.play().catch(e => console.log("Retry play failed", e));
                 return;
             }
             if (fileId && currentSrc.includes('drive.google.com') && currentSrc.includes('export=download')) {
-                audio.src = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                const retrySrc = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                if (sourceEl) sourceEl.src = retrySrc;
+                else audio.src = retrySrc;
+                audio.load();
                 audio.play().catch(e => console.log("Retry play failed", e));
                 return;
             }
             if (fileId && currentSrc.includes('docs.google.com') && currentSrc.includes('export=download')) {
-                audio.src = `https://lh3.googleusercontent.com/d/${fileId}`;
+                const retrySrc = `https://lh3.googleusercontent.com/d/${fileId}`;
+                if (sourceEl) sourceEl.src = retrySrc;
+                else audio.src = retrySrc;
+                audio.load();
                 audio.play().catch(e => console.log("Retry play failed", e));
                 return;
             }
@@ -861,7 +874,7 @@ class App {
                  else if (error.code === 2) msg += "Network error.";
                  else msg += "Unknown error.";
                  
-                 if (audio.src.includes('google.com')) {
+                 if (currentSrc.includes('google.com')) {
                      msg += "<br><small>(Google Drive link failed. Try 'Upload File' instead)</small>";
                  }
                  
@@ -882,6 +895,7 @@ class App {
 
     toggleMusic() {
         const audio = document.getElementById('bgMusic');
+        const sourceEl = document.getElementById('bgMusicSrc');
         const btn = document.getElementById('musicPlayer');
         
         if (this.musicPlaying) {
@@ -948,11 +962,14 @@ class App {
         tempLink.href = targetSrc;
         
         // Check if src is actually changing (ignoring initial empty state)
-        if (audio.src !== tempLink.href) {
+        const currentSource = (sourceEl && sourceEl.src) || audio.currentSrc || audio.src;
+        if (currentSource !== tempLink.href) {
             // For Base64, we don't need the tempLink comparison as much, but it's fine.
             // Critical: If it's a Drive link, we might want to reset the audio element completely to clear errors.
             
-            audio.src = targetSrc;
+            if (sourceEl) sourceEl.src = targetSrc;
+            else audio.src = targetSrc;
+            audio.load();
             
             if (this.musicPlaying) {
                 const playPromise = audio.play();
@@ -1149,6 +1166,9 @@ window.app = new App();
             if(res.ok) {
                 configData = await res.json();
                 populateForm();
+            } else {
+                if(configData.wishes.items.length === 0) addWish();
+                if(configData.gallery.categories.length === 0) addCategory();
             }
         } catch(e) {
             console.log("Could not load existing config automatically. Using defaults.");
@@ -1286,7 +1306,13 @@ window.app = new App();
         }
 
         const previewEl = document.getElementById('audioPreview');
-        previewEl.src = finalSrc;
+        const previewSource = previewEl.querySelector('source');
+        if (previewSource) {
+            previewSource.src = finalSrc;
+            previewEl.load();
+        } else {
+            previewEl.src = finalSrc;
+        }
         
         // Error listener for the preview
         previewEl.onerror = () => {
@@ -1300,17 +1326,35 @@ window.app = new App();
                     const currentSrc = previewEl.src;
 
                     if (currentSrc.includes('drive.usercontent.google.com')) {
-                        previewEl.src = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                        const retrySrc = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                        if (previewSource) {
+                            previewSource.src = retrySrc;
+                            previewEl.load();
+                        } else {
+                            previewEl.src = retrySrc;
+                        }
                         return;
                     }
 
                     if (currentSrc.includes('drive.google.com')) {
-                        previewEl.src = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                        const retrySrc = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                        if (previewSource) {
+                            previewSource.src = retrySrc;
+                            previewEl.load();
+                        } else {
+                            previewEl.src = retrySrc;
+                        }
                         return;
                     }
 
                     if (currentSrc.includes('docs.google.com')) {
-                         previewEl.src = `https://lh3.googleusercontent.com/d/${fileId}`;
+                         const retrySrc = `https://lh3.googleusercontent.com/d/${fileId}`;
+                         if (previewSource) {
+                             previewSource.src = retrySrc;
+                             previewEl.load();
+                         } else {
+                             previewEl.src = retrySrc;
+                         }
                          return;
                     }
                 }
@@ -1495,7 +1539,9 @@ ${cssContent}
     </main>
 
     <!-- Audio Element -->
-    <audio id="bgMusic" loop preload="auto"></audio>
+    <audio id="bgMusic" loop preload="auto">
+        <source id="bgMusicSrc" src="" type="audio/mpeg">
+    </audio>
 
     <script>
     // Configuration Injected by Builder
