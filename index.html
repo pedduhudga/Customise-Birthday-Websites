@@ -149,18 +149,31 @@
                     <button type="button" class="btn btn-outline" onclick="toggleAudioInput('url')" id="btnAudioUrl">🔗 Use URL</button>
                     <button type="button" class="btn btn-outline" onclick="toggleAudioInput('file')" id="btnAudioFile">📂 Upload File</button>
                 </div>
+                
+                <small style="color:#888; display:block; margin-bottom:10px;">
+                    ⚠️ Note: "Upload File" is recommended for best reliability. Google Drive links may fail if too many people access them.
+                </small>
 
                 <div id="audioInputUrl">
                     <input type="text" id="audioSrc" placeholder="song.mp3 or https://drive.google.com/...">
                     <small style="color:#facc15;">
-                        Supported: Direct links, Google Drive (Public), Dropbox (Public), or local filename (if in same folder).
+                        Supported: Direct links, Google Drive (Public), Dropbox. If links fail, use "Upload File" for 100% reliability.
                     </small>
+                    <div id="urlWarning" style="display:none; color:#ef4444; margin-top:5px; font-weight:bold;">
+                        ⚠️ This link cannot be played. Access Denied or Invalid Format. Please use "Upload File" instead.
+                    </div>
                 </div>
 
                 <div id="audioInputFile" style="display:none;">
                     <input type="file" id="audioFile" accept="audio/*" onchange="handleAudioUpload(this)">
                     <small style="color:#22c55e;">✨ File will be embedded! Works everywhere, no need to move files.</small>
                     <input type="hidden" id="audioBase64">
+                </div>
+
+                <!-- Preview Player -->
+                <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                    <label style="margin-bottom: 5px; font-size: 0.8rem;">🎵 Audio Preview (Test before downloading):</label>
+                    <audio id="audioPreview" controls style="width: 100%; height: 40px;"></audio>
                 </div>
             </div>
             <div class="form-group">
@@ -800,23 +813,62 @@ class App {
         const musicBtn = document.getElementById('musicPlayer');
         musicBtn.onclick = () => this.toggleMusic();
 
-        // Audio Error Handling
+        // Audio Error Handling & Retry Logic
         const audio = document.getElementById('bgMusic');
         audio.addEventListener('error', (e) => {
             console.error("Audio Error:", e);
-            const error = audio.error;
-            let msg = "Unknown audio error.";
-            if (error) {
-                switch (error.code) {
-                    case error.MEDIA_ERR_ABORTED: msg = "Aborted fetching audio."; break;
-                    case error.MEDIA_ERR_NETWORK: msg = "Network error while fetching audio."; break;
-                    case error.MEDIA_ERR_DECODE: msg = "Could not decode audio."; break;
-                    case error.MEDIA_ERR_SRC_NOT_SUPPORTED: msg = "Audio format not supported or file not found."; break;
+            
+            // Retry Logic for Google Drive
+            const currentSrc = audio.src;
+            
+            // 1st Retry: Switch drive.google.com -> docs.google.com
+            if (currentSrc.includes('drive.google.com') && currentSrc.includes('export=download')) {
+                console.log("Retrying with docs.google.com...");
+                audio.src = currentSrc.replace('drive.google.com', 'docs.google.com');
+                audio.play().catch(e => console.log("Retry play failed", e));
+                return;
+            }
+            
+            // 2nd Retry: Switch docs.google.com -> lh3.googleusercontent.com
+            if (currentSrc.includes('docs.google.com') && currentSrc.includes('export=download')) {
+                console.log("Retrying with lh3.googleusercontent.com...");
+                const idMatch = currentSrc.match(/id=([-\w]+)/);
+                if (idMatch && idMatch[1]) {
+                    audio.src = `https://lh3.googleusercontent.com/d/${idMatch[1]}`;
+                    audio.play().catch(e => console.log("Retry play failed", e));
+                    return;
                 }
             }
-            // Only alert if it's not empty and looks like a real attempt
-            if (audio.src && audio.src !== window.location.href) {
-                 alert(`Audio Error: ${msg}\n\nFile: ${audio.src.split('/').pop()}\n\nTip: If using a local file, make sure it is in the SAME FOLDER as this HTML file.`);
+
+            const error = audio.error;
+            if (error && audio.src && audio.src !== window.location.href) {
+                 const toast = document.createElement('div');
+                 toast.style.position = 'fixed';
+                 toast.style.bottom = '20px';
+                 toast.style.left = '50%';
+                 toast.style.transform = 'translateX(-50%)';
+                 toast.style.background = 'rgba(239, 68, 68, 0.9)';
+                 toast.style.color = 'white';
+                 toast.style.padding = '10px 20px';
+                 toast.style.borderRadius = '50px';
+                 toast.style.zIndex = '10000';
+                 toast.style.fontSize = '0.9rem';
+                 toast.style.textAlign = 'center';
+                 toast.style.maxWidth = '90%';
+                 
+                 let msg = "🎵 Audio Error: ";
+                 if (error.code === 4) msg += "Format not supported or file not found.";
+                 else if (error.code === 3) msg += "Decoding error.";
+                 else if (error.code === 2) msg += "Network error.";
+                 else msg += "Unknown error.";
+                 
+                 if (audio.src.includes('google.com')) {
+                     msg += "<br><small>(Google Drive link failed. Try 'Upload File' instead)</small>";
+                 }
+                 
+                 toast.innerHTML = msg;
+                 document.body.appendChild(toast);
+                 setTimeout(() => toast.remove(), 8000);
             }
         });
 
@@ -893,15 +945,16 @@ class App {
         }
 
         // Normalize for comparison to avoid unnecessary reloads
-        // We use a temporary anchor to resolve relative paths to absolute
         const tempLink = document.createElement('a');
         tempLink.href = targetSrc;
         
         // Check if src is actually changing (ignoring initial empty state)
         if (audio.src !== tempLink.href) {
+            // For Base64, we don't need the tempLink comparison as much, but it's fine.
+            // Critical: If it's a Drive link, we might want to reset the audio element completely to clear errors.
+            
             audio.src = targetSrc;
             
-            // Only try to play if we were already playing OR if it's the first load and autoplay is true (handled by click listener mostly)
             if (this.musicPlaying) {
                 const playPromise = audio.play();
                 if (playPromise !== undefined) {
@@ -916,19 +969,20 @@ class App {
     formatAudioUrl(url) {
         if (!url) return "";
         
-        // Handle Google Drive links
-        // Matches: drive.google.com/file/d/FILE_ID/view... or /open?id=FILE_ID
-        const driveRegex = /drive\.google\.com\/.*(?:file\/d\/|id=)([-_\w]+)/;
+        // If it's a data URI (Base64), return as is
+        if (url.startsWith('data:')) return url;
+
+        // Handle Google Drive links (Robust ID extraction)
+        // Matches: drive.google.com... file/d/ID, uc?id=ID, open?id=ID
+        const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
         const driveMatch = url.match(driveRegex);
         if (driveMatch && driveMatch[1]) {
-            // Convert to direct download/stream link
-            return `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
+            // Reconstruct the direct link with confirm=t to bypass virus scan warning
+            return `https://drive.google.com/uc?export=download&confirm=t&id=${driveMatch[1]}`;
         }
         
         // Handle Dropbox links
-        // Matches: www.dropbox.com/... or dl.dropboxusercontent.com/...
         if (url.includes('dropbox.com')) {
-            // Ensure dl=1 for direct download
             return url.replace('dl=0', 'dl=1').replace('?dl=0', '?dl=1');
         }
 
@@ -1181,6 +1235,7 @@ window.app = new App();
 
     // Audio Helpers
     let activeAudioMode = 'url'; // Default mode
+    const audioPreview = document.getElementById('audioPreview');
 
     function toggleAudioInput(mode) {
         activeAudioMode = mode;
@@ -1189,12 +1244,86 @@ window.app = new App();
             document.getElementById('audioInputFile').style.display = 'none';
             document.getElementById('btnAudioUrl').classList.add('active');
             document.getElementById('btnAudioFile').classList.remove('active');
+            // Update preview
+            updateAudioPreview(document.getElementById('audioSrc').value);
         } else {
             document.getElementById('audioInputUrl').style.display = 'none';
             document.getElementById('audioInputFile').style.display = 'block';
             document.getElementById('btnAudioUrl').classList.remove('active');
             document.getElementById('btnAudioFile').classList.add('active');
+            // Update preview if file loaded
+            const base64 = document.getElementById('audioBase64').value;
+            if(base64) updateAudioPreview(base64);
         }
+    }
+
+    // Auto-update preview on URL change
+    document.getElementById('audioSrc').addEventListener('input', (e) => {
+        if(activeAudioMode === 'url') updateAudioPreview(e.target.value);
+    });
+
+    function updateAudioPreview(src) {
+        if(!src) {
+            document.getElementById('audioPreview').src = "";
+            return;
+        }
+        
+        // Convert Google Drive links for preview
+        let finalSrc = src;
+        
+        // Skip regex for data URIs
+        if (!src.startsWith('data:')) {
+            const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
+            const driveMatch = src.match(driveRegex);
+            if (driveMatch && driveMatch[1]) {
+                // Add confirm=t to attempt to bypass virus scan warning for medium sized files
+                finalSrc = `https://drive.google.com/uc?export=download&confirm=t&id=${driveMatch[1]}`;
+            }
+            
+            // Handle Dropbox links
+            if (finalSrc.includes('dropbox.com')) {
+                finalSrc = finalSrc.replace('dl=0', 'dl=1').replace('?dl=0', '?dl=1');
+            }
+        }
+
+        const previewEl = document.getElementById('audioPreview');
+        previewEl.src = finalSrc;
+        
+        // Error listener for the preview
+        previewEl.onerror = () => {
+            // Retry Logic for Google Drive
+            if (activeAudioMode === 'url' && src) {
+                const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
+                const driveMatch = src.match(driveRegex);
+                if (driveMatch && driveMatch[1]) {
+                    const fileId = driveMatch[1];
+                    const currentSrc = previewEl.src;
+                    
+                    // 1st Retry: Try docs.google.com with confirm=t
+                    if (currentSrc.includes('drive.google.com')) {
+                        console.log("Retrying with docs.google.com...");
+                        previewEl.src = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}`;
+                        return;
+                    }
+                    
+                    // 2nd Retry: Try lh3.googleusercontent.com
+                    if (currentSrc.includes('docs.google.com')) {
+                         console.log("Retrying with lh3.googleusercontent.com...");
+                         previewEl.src = `https://lh3.googleusercontent.com/d/${fileId}`;
+                         return;
+                    }
+                }
+
+                // Show warning if all retries failed
+                const warning = document.getElementById('urlWarning');
+                if(warning) warning.style.display = 'block';
+            }
+        };
+        // Hide warning on success
+        previewEl.onloadeddata = () => {
+             const warning = document.getElementById('urlWarning');
+             if(warning) warning.style.display = 'none';
+        };
     }
 
     function handleAudioUpload(input) {
@@ -1202,17 +1331,17 @@ window.app = new App();
         if(!file) return;
 
         // Limit size to avoid browser crash (e.g. 10MB)
-        if(file.size > 10 * 1024 * 1024) {
-            alert("File too large! Please use a smaller audio file (under 10MB) or use a URL.");
+        if(file.size > 15 * 1024 * 1024) { // Increased limit slightly
+            alert("File too large! Please use a smaller audio file (under 15MB) or use a URL.");
             input.value = "";
             return;
         }
 
         const reader = new FileReader();
         reader.onload = function(e) {
-            document.getElementById('audioBase64').value = e.target.result;
-            // Also update URL field to show something happened, though we prioritize Base64
-            document.getElementById('audioSrc').value = "(Embedded File Selected)";
+            const result = e.target.result;
+            document.getElementById('audioBase64').value = result;
+            updateAudioPreview(result);
         };
         reader.readAsDataURL(file);
     }
@@ -1367,7 +1496,7 @@ ${cssContent}
     </main>
 
     <!-- Audio Element -->
-    <audio id="bgMusic" loop></audio>
+    <audio id="bgMusic" loop preload="auto"></audio>
 
     <script>
     // Configuration Injected by Builder
@@ -1378,14 +1507,16 @@ ${cssContent}
 </body>
 </html>`;
 
-        // Download
-        const dataStr = "data:text/html;charset=utf-8," + encodeURIComponent(html);
+        // Download using Blob to handle large files (Base64 audio)
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
         const downloadAnchorNode = document.createElement('a');
-        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("href", url);
         downloadAnchorNode.setAttribute("download", "happy-birthday.html");
         document.body.appendChild(downloadAnchorNode);
         downloadAnchorNode.click();
         downloadAnchorNode.remove();
+        URL.revokeObjectURL(url);
         
         alert("Success! Your 'happy-birthday.html' file has been downloaded. You can now open it in any browser or send it to anyone!");
     }
