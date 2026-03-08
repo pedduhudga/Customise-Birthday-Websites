@@ -175,7 +175,7 @@
                 <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
                     <label style="margin-bottom: 5px; font-size: 0.8rem;">🎵 Audio Preview (Test before downloading):</label>
                     <audio id="audioPreview" controls style="width: 100%; height: 40px;">
-                        <source id="audioPreviewSource" src="" type="audio/mpeg">
+                        <source id="audioPreviewSource" src="">
                     </audio>
                 </div>
             </div>
@@ -967,8 +967,14 @@ class App {
             // For Base64, we don't need the tempLink comparison as much, but it's fine.
             // Critical: If it's a Drive link, we might want to reset the audio element completely to clear errors.
             
-            if (sourceEl) sourceEl.src = targetSrc;
-            else audio.src = targetSrc;
+            if (sourceEl) {
+                sourceEl.src = targetSrc;
+                const mime = this.detectAudioMime(targetSrc);
+                if (mime) sourceEl.type = mime;
+                else sourceEl.removeAttribute('type');
+            } else {
+                audio.src = targetSrc;
+            }
             audio.load();
             
             if (this.musicPlaying) {
@@ -980,6 +986,22 @@ class App {
                 }
             }
         }
+    }
+
+    detectAudioMime(src) {
+        if (!src) return "";
+        if (src.startsWith('data:')) {
+            const m = src.match(/^data:([^;,]+)/i);
+            return m && m[1] ? m[1].toLowerCase() : "";
+        }
+        const clean = src.split('?')[0].toLowerCase();
+        if (clean.endsWith('.mp3')) return 'audio/mpeg';
+        if (clean.endsWith('.m4a') || clean.endsWith('.mp4')) return 'audio/mp4';
+        if (clean.endsWith('.aac')) return 'audio/aac';
+        if (clean.endsWith('.wav')) return 'audio/wav';
+        if (clean.endsWith('.ogg') || clean.endsWith('.oga')) return 'audio/ogg';
+        if (clean.endsWith('.webm')) return 'audio/webm';
+        return "";
     }
 
     formatAudioUrl(url) {
@@ -1309,6 +1331,9 @@ window.app = new App();
         const previewSource = previewEl.querySelector('source');
         if (previewSource) {
             previewSource.src = finalSrc;
+            const mime = detectAudioMime(finalSrc);
+            if (mime) previewSource.type = mime;
+            else previewSource.removeAttribute('type');
             previewEl.load();
         } else {
             previewEl.src = finalSrc;
@@ -1329,6 +1354,9 @@ window.app = new App();
                         const retrySrc = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
                         if (previewSource) {
                             previewSource.src = retrySrc;
+                            const mime = detectAudioMime(retrySrc);
+                            if (mime) previewSource.type = mime;
+                            else previewSource.removeAttribute('type');
                             previewEl.load();
                         } else {
                             previewEl.src = retrySrc;
@@ -1340,6 +1368,9 @@ window.app = new App();
                         const retrySrc = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
                         if (previewSource) {
                             previewSource.src = retrySrc;
+                            const mime = detectAudioMime(retrySrc);
+                            if (mime) previewSource.type = mime;
+                            else previewSource.removeAttribute('type');
                             previewEl.load();
                         } else {
                             previewEl.src = retrySrc;
@@ -1351,6 +1382,9 @@ window.app = new App();
                          const retrySrc = `https://lh3.googleusercontent.com/d/${fileId}`;
                          if (previewSource) {
                              previewSource.src = retrySrc;
+                             const mime = detectAudioMime(retrySrc);
+                             if (mime) previewSource.type = mime;
+                             else previewSource.removeAttribute('type');
                              previewEl.load();
                          } else {
                              previewEl.src = retrySrc;
@@ -1367,6 +1401,22 @@ window.app = new App();
              const warning = document.getElementById('urlWarning');
              if(warning) warning.style.display = 'none';
         };
+    }
+
+    function detectAudioMime(src) {
+        if(!src) return "";
+        if(src.startsWith('data:')) {
+            const m = src.match(/^data:([^;,]+)/i);
+            return m && m[1] ? m[1].toLowerCase() : "";
+        }
+        const clean = src.split('?')[0].toLowerCase();
+        if(clean.endsWith('.mp3')) return 'audio/mpeg';
+        if(clean.endsWith('.m4a') || clean.endsWith('.mp4')) return 'audio/mp4';
+        if(clean.endsWith('.aac')) return 'audio/aac';
+        if(clean.endsWith('.wav')) return 'audio/wav';
+        if(clean.endsWith('.ogg') || clean.endsWith('.oga')) return 'audio/ogg';
+        if(clean.endsWith('.webm')) return 'audio/webm';
+        return "";
     }
 
     function handleAudioUpload(input) {
@@ -1540,7 +1590,7 @@ ${cssContent}
 
     <!-- Audio Element -->
     <audio id="bgMusic" loop preload="auto">
-        <source id="bgMusicSrc" src="" type="audio/mpeg">
+        <source id="bgMusicSrc" src="">
     </audio>
 
     <script>
