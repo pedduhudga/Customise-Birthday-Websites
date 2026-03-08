@@ -942,6 +942,7 @@ class App {
         if (!this.config) return;
         const category = this.config.gallery.categories.find(c => c.id === this.currentCategory);
         const audio = document.getElementById('bgMusic');
+        const sourceEl = document.getElementById('bgMusicSrc');
         
         // Default to main audio
         let targetSrc = "";
