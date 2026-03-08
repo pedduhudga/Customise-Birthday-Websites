@@ -1007,23 +1007,22 @@ class App {
     formatAudioUrl(url) {
         if (!url) return "";
         
-        // If it's a data URI (Base64), return as is
-        if (url.startsWith('data:')) return url;
+        const trimmed = String(url).trim();
+        if (trimmed.startsWith('data:')) return trimmed;
 
-        const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
-        const driveMatch = url.match(driveRegex);
-        if (driveMatch && driveMatch[1]) {
+        const strict = trimmed.match(/(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/);
+        const loose = strict && strict[1] ? strict[1] : ((trimmed.match(/[-\w]{25,}/) || [])[0] || "");
+        if (loose) {
             const resourceKeyMatch = url.match(/[?&]resourcekey=([^&]+)/);
             const resourceKey = resourceKeyMatch && resourceKeyMatch[1] ? `&resourcekey=${resourceKeyMatch[1]}` : "";
-            return `https://drive.usercontent.google.com/download?id=${driveMatch[1]}&export=download&confirm=t${resourceKey}`;
+            return `https://drive.usercontent.google.com/download?id=${loose}&export=download&confirm=t${resourceKey}`;
         }
         
-        // Handle Dropbox links
-        if (url.includes('dropbox.com')) {
-            return url.replace('dl=0', 'dl=1').replace('?dl=0', '?dl=1');
+        if (trimmed.includes('dropbox.com')) {
+            return trimmed.replace('dl=0', 'dl=1').replace('?dl=0', '?dl=1');
         }
 
-        return url;
+        return trimmed;
     }
 
     loadGalleryImages() {
@@ -1302,30 +1301,48 @@ window.app = new App();
         if(activeAudioMode === 'url') updateAudioPreview(e.target.value);
     });
 
+    document.getElementById('audioSrc').addEventListener('paste', (e) => {
+        setTimeout(() => {
+            const inputEl = e.target;
+            const normalized = normalizeAudioUrl(inputEl.value);
+            if (normalized) {
+                inputEl.value = normalized;
+                if(activeAudioMode === 'url') updateAudioPreview(normalized);
+            }
+        }, 0);
+    });
+
+    function extractDriveFileId(url) {
+        if(!url) return "";
+        const strict = url.match(/(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/);
+        if (strict && strict[1]) return strict[1];
+        const loose = url.match(/[-\w]{25,}/);
+        return loose && loose[0] ? loose[0] : "";
+    }
+
+    function normalizeAudioUrl(url) {
+        if(!url) return "";
+        const trimmed = String(url).trim();
+        if(trimmed.startsWith('data:')) return trimmed;
+        const driveId = extractDriveFileId(trimmed);
+        if (driveId) {
+            const resourceKeyMatch = trimmed.match(/[?&]resourcekey=([^&]+)/);
+            const resourceKey = resourceKeyMatch && resourceKeyMatch[1] ? `&resourcekey=${resourceKeyMatch[1]}` : "";
+            return `https://drive.usercontent.google.com/download?id=${driveId}&export=download&confirm=t${resourceKey}`;
+        }
+        if (trimmed.includes('dropbox.com')) {
+            return trimmed.replace('dl=0', 'dl=1').replace('?dl=0', '?dl=1');
+        }
+        return trimmed;
+    }
+
     function updateAudioPreview(src) {
         if(!src) {
             document.getElementById('audioPreview').src = "";
             return;
         }
         
-        // Convert Google Drive links for preview
-        let finalSrc = src;
-        
-        // Skip regex for data URIs
-        if (!src.startsWith('data:')) {
-            const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
-            const driveMatch = src.match(driveRegex);
-            if (driveMatch && driveMatch[1]) {
-                const resourceKeyMatch = src.match(/[?&]resourcekey=([^&]+)/);
-                const resourceKey = resourceKeyMatch && resourceKeyMatch[1] ? `&resourcekey=${resourceKeyMatch[1]}` : "";
-                finalSrc = `https://drive.usercontent.google.com/download?id=${driveMatch[1]}&export=download&confirm=t${resourceKey}`;
-            }
-            
-            // Handle Dropbox links
-            if (finalSrc.includes('dropbox.com')) {
-                finalSrc = finalSrc.replace('dl=0', 'dl=1').replace('?dl=0', '?dl=1');
-            }
-        }
+        const finalSrc = normalizeAudioUrl(src);
 
         const previewEl = document.getElementById('audioPreview');
         const previewSource = previewEl.querySelector('source');
@@ -1342,10 +1359,8 @@ window.app = new App();
         // Error listener for the preview
         previewEl.onerror = () => {
             if (activeAudioMode === 'url' && src) {
-                const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
-                const driveMatch = src.match(driveRegex);
-                if (driveMatch && driveMatch[1]) {
-                    const fileId = driveMatch[1];
+                const fileId = extractDriveFileId(src);
+                if (fileId) {
                     const resourceKeyMatch = src.match(/[?&]resourcekey=([^&]+)/);
                     const resourceKey = resourceKeyMatch && resourceKeyMatch[1] ? `&resourcekey=${resourceKeyMatch[1]}` : "";
                     const currentSrc = previewEl.src;
