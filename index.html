@@ -1010,12 +1010,18 @@ class App {
         const trimmed = String(url).trim();
         if (trimmed.startsWith('data:')) return trimmed;
 
+        const isDriveHost = /(?:^|\.)drive\.google\.com$|(?:^|\.)docs\.google\.com$|(?:^|\.)drive\.usercontent\.google\.com$/.test((() => {
+            try { return new URL(trimmed).hostname; } catch { return ""; }
+        })());
+        if (isDriveHost && /\/drive\/folders\//.test(trimmed)) return "";
+
         const strict = trimmed.match(/(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/);
-        const loose = strict && strict[1] ? strict[1] : ((trimmed.match(/[-\w]{25,}/) || [])[0] || "");
-        if (loose) {
+        const loose = isDriveHost ? ((trimmed.match(/[-\w]{25,}/) || [])[0] || "") : "";
+        const fileId = strict && strict[1] ? strict[1] : loose;
+        if (fileId) {
             const resourceKeyMatch = url.match(/[?&]resourcekey=([^&]+)/);
             const resourceKey = resourceKeyMatch && resourceKeyMatch[1] ? `&resourcekey=${resourceKeyMatch[1]}` : "";
-            return `https://drive.usercontent.google.com/download?id=${loose}&export=download&confirm=t${resourceKey}`;
+            return `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t${resourceKey}`;
         }
         
         if (trimmed.includes('dropbox.com')) {
@@ -1314,16 +1320,37 @@ window.app = new App();
 
     function extractDriveFileId(url) {
         if(!url) return "";
-        const strict = url.match(/(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/);
-        if (strict && strict[1]) return strict[1];
-        const loose = url.match(/[-\w]{25,}/);
-        return loose && loose[0] ? loose[0] : "";
+        const raw = String(url).trim();
+        let hostname = "";
+        let pathname = "";
+        let search = "";
+        try {
+            const u = new URL(raw);
+            hostname = u.hostname;
+            pathname = u.pathname;
+            search = u.search || "";
+            if (/drive\.google\.com$|docs\.google\.com$|drive\.usercontent\.google\.com$/.test(hostname)) {
+                if (/\/drive\/folders\//.test(pathname)) return "";
+                const pathId = pathname.match(/\/file\/d\/([-\w]+)/);
+                if (pathId && pathId[1]) return pathId[1];
+                const paramId = u.searchParams.get('id');
+                if (paramId && /^[-\w]{25,}$/.test(paramId)) return paramId;
+            }
+        } catch {}
+        if (/drive\.google\.com|docs\.google\.com|drive\.usercontent\.google\.com/.test(raw)) {
+            const strict = raw.match(/(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]{25,})/);
+            if (strict && strict[1]) return strict[1];
+            const loose = raw.match(/[-\w]{25,}/);
+            if (loose && loose[0] && !/\/drive\/folders\//.test(pathname + search + raw)) return loose[0];
+        }
+        return "";
     }
 
     function normalizeAudioUrl(url) {
         if(!url) return "";
         const trimmed = String(url).trim();
         if(trimmed.startsWith('data:')) return trimmed;
+        if (/drive\.google\.com\/drive\/folders\//.test(trimmed)) return "";
         const driveId = extractDriveFileId(trimmed);
         if (driveId) {
             const resourceKeyMatch = trimmed.match(/[?&]resourcekey=([^&]+)/);
@@ -1343,6 +1370,11 @@ window.app = new App();
         }
         
         const finalSrc = normalizeAudioUrl(src);
+        if (!finalSrc) {
+            const warning = document.getElementById('urlWarning');
+            if(warning) warning.style.display = 'block';
+            return;
+        }
 
         const previewEl = document.getElementById('audioPreview');
         const previewSource = previewEl.querySelector('source');
@@ -1471,7 +1503,7 @@ window.app = new App();
             newConfig.audio.sources[0].src = document.getElementById('audioBase64').value;
         } else {
             // URL Mode
-            newConfig.audio.sources[0].src = document.getElementById('audioSrc').value;
+            newConfig.audio.sources[0].src = normalizeAudioUrl(document.getElementById('audioSrc').value);
         }
         
         newConfig.audio.autoplay = document.getElementById('audioAutoplay').checked;
