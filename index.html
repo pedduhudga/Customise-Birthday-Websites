@@ -202,6 +202,15 @@
                 <label>Subtitle</label>
                 <input type="text" id="wishesSubtitle" value="Tap any card to reveal a special line ✨">
             </div>
+            <div class="form-group">
+                <label>Section Audio (Optional)</label>
+                <input type="text" id="wishesAudioSrc" placeholder="song.mp3 or https://drive.google.com/...">
+                <small style="color:#888;">Plays only for this section.</small>
+                <div style="margin-top:8px;">
+                    <input type="file" id="wishesAudioFile" accept="audio/*" onchange="handleSectionAudioUpload(this, 'wishes')">
+                    <input type="hidden" id="wishesAudioBase64">
+                </div>
+            </div>
             <label>Messages List</label>
             <div id="wishesList"></div>
             <button type="button" class="btn btn-outline" onclick="addWish()">+ Add Wish</button>
@@ -228,6 +237,15 @@
             <div class="form-group">
                 <label>Subtitle</label>
                 <input type="text" id="finalSubtitle" value="Just for you">
+            </div>
+            <div class="form-group">
+                <label>Section Audio (Optional)</label>
+                <input type="text" id="finalAudioSrc" placeholder="song.mp3 or https://drive.google.com/...">
+                <small style="color:#888;">Plays only for this section.</small>
+                <div style="margin-top:8px;">
+                    <input type="file" id="finalAudioFile" accept="audio/*" onchange="handleSectionAudioUpload(this, 'final')">
+                    <input type="hidden" id="finalAudioBase64">
+                </div>
             </div>
             <div class="form-group">
                 <label>Badge Text</label>
@@ -718,11 +736,13 @@ class App {
     }
 
     async init() {
+        console.log("App v2.1 loaded - Fix applied");
         try {
             this.applyTheme();
             this.renderContent();
             this.initParticles();
             this.setupEventListeners();
+            this.tryAutoPlay();
             
             // Remove preloader
             setTimeout(() => {
@@ -736,6 +756,34 @@ class App {
         } catch (error) {
             console.error('Failed to init:', error);
         }
+    }
+
+    tryAutoPlay() {
+        const audio = document.getElementById('bgMusic');
+        if(this.config && this.config.audio.autoplay) {
+            const promise = audio.play();
+            if (promise !== undefined) {
+                promise.then(() => {
+                    this.musicPlaying = true;
+                    const btn = document.getElementById('musicPlayer');
+                    if(btn) btn.classList.remove('paused');
+                }).catch(error => {
+                    console.log("Autoplay prevented. Waiting for interaction.");
+                });
+            }
+        }
+    }
+
+    handleStart() {
+        if (!this.musicPlaying) {
+            // Force play on direct interaction
+            const audio = document.getElementById('bgMusic');
+            audio.play().then(() => {
+                this.musicPlaying = true;
+                document.getElementById('musicPlayer').classList.remove('paused');
+            }).catch(e => console.log("Start play failed", e));
+        }
+        this.nextSection();
     }
 
     applyTheme() {
@@ -890,12 +938,26 @@ class App {
         });
 
         // Global interaction for auto-play
-        document.body.addEventListener('click', () => {
+        const autoPlayHandler = () => {
             if (!this.musicPlaying && this.config && this.config.audio.autoplay) {
-                this.toggleMusic();
-                this.config.audio.autoplay = false; 
+                const audio = document.getElementById('bgMusic');
+                audio.play().then(() => {
+                    this.musicPlaying = true;
+                    const btn = document.getElementById('musicPlayer');
+                    if(btn) btn.classList.remove('paused');
+                    // Remove listeners once successful
+                    document.body.removeEventListener('click', autoPlayHandler);
+                    document.body.removeEventListener('touchstart', autoPlayHandler);
+                    document.body.removeEventListener('keydown', autoPlayHandler);
+                }).catch(e => {
+                    console.log("Interaction auto-play failed (browser restriction).");
+                });
             }
-        }, { once: true });
+        };
+
+        document.body.addEventListener('click', autoPlayHandler);
+        document.body.addEventListener('touchstart', autoPlayHandler);
+        document.body.addEventListener('keydown', autoPlayHandler);
     }
 
     toggleMusic() {
@@ -922,6 +984,7 @@ class App {
             this.currentSection++;
             const nextEl = document.getElementById(this.sections[this.currentSection]);
             nextEl.classList.add('active');
+            this.updateAudio();
         }
     }
 
@@ -940,26 +1003,48 @@ class App {
 
     updateAudio() {
         if (!this.config) return;
+        const section = this.sections[this.currentSection]; // 'hero', 'quotes', 'gallery', 'final'
         const category = this.config.gallery.categories.find(c => c.id === this.currentCategory);
         const audio = document.getElementById('bgMusic');
         const sourceEl = document.getElementById('bgMusicSrc');
         
-        // Default to main audio
+        // 1. Determine base source based on section
         let targetSrc = "";
+        
+        // Default (Hero)
         if (this.config.audio.sources.length > 0) {
             targetSrc = this.config.audio.sources[0].src;
         }
-        
-        // Override with category audio if present
-        if (category && category.audio) {
-            targetSrc = category.audio;
+
+        if (section === 'quotes') {
+             // Use Wishes audio if present, else keep default
+             if (this.config.wishes && this.config.wishes.audio) {
+                 targetSrc = this.config.wishes.audio;
+             }
+        } else if (section === 'gallery') {
+             // Gallery logic: Category > Default
+             if (category && category.audio) {
+                 targetSrc = category.audio;
+             }
+        } else if (section === 'final') {
+             // Final audio > Default
+             if (this.config.final && this.config.final.audio) {
+                 targetSrc = this.config.final.audio;
+             }
         }
         
         // Apply format conversion (Google Drive, etc)
         targetSrc = this.formatAudioUrl(targetSrc);
         
         if (!targetSrc) {
-            if (this.musicPlaying) this.toggleMusic();
+            // Only pause if we were playing, to avoid auto-play issues if not intended
+            if (this.musicPlaying) {
+                 audio.pause();
+                 this.musicPlaying = false;
+                 // Update UI button state if needed
+                 const btn = document.getElementById('musicPlayer');
+                 if(btn) btn.classList.add('paused');
+            }
             return;
         }
 
@@ -974,6 +1059,7 @@ class App {
             // Critical: If it's a Drive link, we might want to reset the audio element completely to clear errors.
             
             if (sourceEl) {
+                audio.pause();
                 sourceEl.src = targetSrc;
                 const mime = this.detectAudioMime(targetSrc);
                 if (mime) sourceEl.type = mime;
@@ -1564,6 +1650,25 @@ window.app = new App();
         if(countEl) countEl.textContent = `Uploaded photos: ${merged.length}`;
     }
 
+    async function handleSectionAudioUpload(input, section) {
+        const file = input.files && input.files[0];
+        if(!file) return;
+        
+        // Limit size to avoid browser crash (e.g. 15MB)
+        if(file.size > 15 * 1024 * 1024) { 
+            alert("File too large! Please use a smaller audio file (under 15MB) or use a URL.");
+            input.value = "";
+            return;
+        }
+
+        const data = await readFileAsDataUrl(file);
+        if(section === 'wishes') {
+            document.getElementById('wishesAudioBase64').value = data;
+        } else if(section === 'final') {
+            document.getElementById('finalAudioBase64').value = data;
+        }
+    }
+
     function generateWebsite() {
         // Gather Data
         const newConfig = JSON.parse(JSON.stringify(configData)); // Deep copy
@@ -1590,6 +1695,9 @@ window.app = new App();
         newConfig.wishes.title = document.getElementById('wishesTitle').value;
         newConfig.wishes.subtitle = document.getElementById('wishesSubtitle').value;
         newConfig.wishes.items = Array.from(document.querySelectorAll('.wish-input')).map(i => i.value).filter(v => v);
+        // Wishes Audio
+        const wishesAudioBase64 = document.getElementById('wishesAudioBase64').value;
+        newConfig.wishes.audio = wishesAudioBase64 || normalizeAudioUrl(document.getElementById('wishesAudioSrc').value);
 
         newConfig.gallery.title = document.getElementById('galleryTitle').value;
         newConfig.gallery.categories = Array.from(document.querySelectorAll('.gallery-category')).map((el, index) => {
@@ -1617,6 +1725,9 @@ window.app = new App();
 
         newConfig.final.title = document.getElementById('finalTitle').value;
         newConfig.final.subtitle = document.getElementById('finalSubtitle').value;
+        // Final Audio
+        const finalAudioBase64 = document.getElementById('finalAudioBase64').value;
+        newConfig.final.audio = finalAudioBase64 || normalizeAudioUrl(document.getElementById('finalAudioSrc').value);
         newConfig.final.badgeText = document.getElementById('finalBadge').value;
         newConfig.final.cardTitle = document.getElementById('finalCardTitle').value;
         newConfig.final.cardText = document.getElementById('finalCardText').value;
@@ -1672,7 +1783,7 @@ ${cssContent}
                 </div>
                 <h1 id="heroTitle" class="gradient-text"></h1>
                 <p id="heroSubtitle" class="subtitle"></p>
-                <button class="btn-primary" onclick="app.nextSection()">Start Celebration ➜</button>
+                <button class="btn-primary" onclick="app.handleStart()">Start Celebration ➜</button>
             </div>
         </section>
 
@@ -1727,7 +1838,7 @@ ${cssContent}
 
     <!-- Audio Element -->
     <audio id="bgMusic" loop preload="auto">
-        <source id="bgMusicSrc" src="">
+        <source id="bgMusicSrc" src="${newConfig.audio.sources[0].src}" type="${detectAudioMime(newConfig.audio.sources[0].src)}">
     </audio>
 
     <script>
