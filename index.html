@@ -138,6 +138,11 @@
                 <label>Profile Image URL</label>
                 <input type="text" id="heroImage" placeholder="https://example.com/photo.jpg">
                 <small style="color:#888;">Tip: Use direct image links (Imgur, Google Drive, etc.) since this is a single file.</small>
+                <div style="margin-top:10px;">
+                    <input type="file" id="heroImageFile" accept="image/*" onchange="handleHeroImageUpload(this)">
+                    <small style="color:#22c55e; display:block; margin-top:4px;">Upload image from gallery/device (recommended).</small>
+                    <input type="hidden" id="heroImageBase64">
+                </div>
             </div>
         </div>
 
@@ -1257,21 +1262,38 @@ window.app = new App();
 
     function addCategory(data = { id: "", label: "", images: [], audio: "" }) {
         const id = Date.now() + Math.random().toString(36).substr(2, 5);
+        const label = (data.label || '').replace(/"/g, '&quot;');
+        const audioValue = (data.audio || '').startsWith('data:') ? '' : (data.audio || '');
+        const audioBase64 = (data.audio || '').startsWith('data:') ? data.audio : '';
+        const imageList = Array.isArray(data.images) ? data.images : [];
+        const imageUrlLines = imageList.filter(v => !String(v).startsWith('data:')).join('\n');
+        const imageBase64List = imageList.filter(v => String(v).startsWith('data:'));
+        const imageBase64Json = JSON.stringify(imageBase64List).replace(/"/g, '&quot;');
         const div = document.createElement('div');
         div.className = 'gallery-category section';
         div.innerHTML = `
             <div class="form-group">
                 <label>Category Name (e.g., "Childhood")</label>
-                <input type="text" class="cat-label" value="${(data.label || '').replace(/"/g, '&quot;')}" placeholder="Category Name">
+                <input type="text" class="cat-label" value="${label}" placeholder="Category Name">
             </div>
             <div class="form-group">
                 <label>Category Audio (Optional)</label>
-                <input type="text" class="cat-audio" value="${(data.audio || '').replace(/"/g, '&quot;')}" placeholder="song.mp3 or https://drive.google.com/...">
+                <input type="text" class="cat-audio" value="${audioValue.replace(/"/g, '&quot;')}" placeholder="song.mp3 or https://drive.google.com/...">
                 <small style="color:#888;">Plays when this category is selected. Supports Google Drive & Dropbox links.</small>
+                <div style="margin-top:8px;">
+                    <input type="file" class="cat-audio-file" accept="audio/*" onchange="handleCategoryAudioUpload(this)">
+                    <small style="color:#22c55e; display:block; margin-top:4px;">Upload category audio from files.</small>
+                    <input type="hidden" class="cat-audio-base64" value="${audioBase64.replace(/"/g, '&quot;')}">
+                </div>
             </div>
             <div class="form-group">
                 <label>Image URLs / Paths (One per line)</label>
-                <textarea class="cat-images" placeholder="https://.../1.jpg\nhttps://.../2.jpg">${data.images ? data.images.join('\n') : ''}</textarea>
+                <textarea class="cat-images" placeholder="https://.../1.jpg\nhttps://.../2.jpg">${imageUrlLines}</textarea>
+                <div style="margin-top:8px;">
+                    <input type="file" class="cat-images-file" accept="image/*" multiple onchange="handleCategoryImagesUpload(this)">
+                    <small class="cat-images-count" style="color:#22c55e; display:block; margin-top:4px;">Uploaded photos: ${imageBase64List.length}</small>
+                    <input type="hidden" class="cat-images-base64" value="${imageBase64Json}">
+                </div>
             </div>
             <button type="button" class="btn btn-danger" onclick="this.parentElement.remove()">Remove Category</button>
         `;
@@ -1466,6 +1488,31 @@ window.app = new App();
         return "";
     }
 
+    function detectFileMime(src) {
+        if(!src) return "";
+        if(src.startsWith('data:')) {
+            const m = src.match(/^data:([^;,]+)/i);
+            return m && m[1] ? m[1].toLowerCase() : "";
+        }
+        return "";
+    }
+
+    function readFileAsDataUrl(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function handleHeroImageUpload(input) {
+        const file = input.files && input.files[0];
+        if(!file) return;
+        const data = await readFileAsDataUrl(file);
+        document.getElementById('heroImageBase64').value = data;
+    }
+
     function handleAudioUpload(input) {
         const file = input.files[0];
         if(!file) return;
@@ -1486,6 +1533,36 @@ window.app = new App();
         reader.readAsDataURL(file);
     }
 
+    async function handleCategoryAudioUpload(input) {
+        const file = input.files && input.files[0];
+        if(!file) return;
+        const categoryEl = input.closest('.gallery-category');
+        if(!categoryEl) return;
+        const data = await readFileAsDataUrl(file);
+        const hidden = categoryEl.querySelector('.cat-audio-base64');
+        if(hidden) hidden.value = data;
+    }
+
+    async function handleCategoryImagesUpload(input) {
+        const files = Array.from(input.files || []);
+        if(!files.length) return;
+        const categoryEl = input.closest('.gallery-category');
+        if(!categoryEl) return;
+        const hidden = categoryEl.querySelector('.cat-images-base64');
+        const countEl = categoryEl.querySelector('.cat-images-count');
+        let existing = [];
+        try {
+            existing = JSON.parse(hidden && hidden.value ? hidden.value : '[]');
+            if(!Array.isArray(existing)) existing = [];
+        } catch {
+            existing = [];
+        }
+        const uploaded = await Promise.all(files.map(readFileAsDataUrl));
+        const merged = existing.concat(uploaded);
+        if(hidden) hidden.value = JSON.stringify(merged);
+        if(countEl) countEl.textContent = `Uploaded photos: ${merged.length}`;
+    }
+
     function generateWebsite() {
         // Gather Data
         const newConfig = JSON.parse(JSON.stringify(configData)); // Deep copy
@@ -1496,7 +1573,8 @@ window.app = new App();
         newConfig.hero.title = document.getElementById('heroTitle').value;
         newConfig.hero.subtitle = document.getElementById('heroSubtitle').value;
         newConfig.hero.badgeText = document.getElementById('heroBadge').value;
-        newConfig.hero.image = document.getElementById('heroImage').value;
+        const heroImageBase64 = document.getElementById('heroImageBase64').value;
+        newConfig.hero.image = heroImageBase64 || document.getElementById('heroImage').value;
 
         // Audio Logic: Check if we are in FILE mode or URL mode
         if (activeAudioMode === 'file' && document.getElementById('audioBase64').value) {
@@ -1515,8 +1593,19 @@ window.app = new App();
         newConfig.gallery.title = document.getElementById('galleryTitle').value;
         newConfig.gallery.categories = Array.from(document.querySelectorAll('.gallery-category')).map((el, index) => {
             const label = el.querySelector('.cat-label').value;
-            const audio = el.querySelector('.cat-audio').value;
-            const images = el.querySelector('.cat-images').value.split('\n').map(s => s.trim()).filter(s => s);
+            const audioBase64 = el.querySelector('.cat-audio-base64')?.value || "";
+            const audioInput = el.querySelector('.cat-audio')?.value || "";
+            const audio = audioBase64 || normalizeAudioUrl(audioInput);
+            const urlImages = (el.querySelector('.cat-images')?.value || "").split('\n').map(s => s.trim()).filter(s => s);
+            let uploadedImages = [];
+            try {
+                const raw = el.querySelector('.cat-images-base64')?.value || "[]";
+                const parsed = JSON.parse(raw);
+                uploadedImages = Array.isArray(parsed) ? parsed : [];
+            } catch {
+                uploadedImages = [];
+            }
+            const images = urlImages.concat(uploadedImages);
             return {
                 id: 'cat-' + index,
                 label: label || "Category " + (index + 1),
