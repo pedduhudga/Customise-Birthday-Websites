@@ -818,26 +818,25 @@ class App {
         audio.addEventListener('error', (e) => {
             console.error("Audio Error:", e);
             
-            // Retry Logic for Google Drive
             const currentSrc = audio.src;
-            
-            // 1st Retry: Switch drive.google.com -> docs.google.com
-            if (currentSrc.includes('drive.google.com') && currentSrc.includes('export=download')) {
-                console.log("Retrying with docs.google.com...");
-                audio.src = currentSrc.replace('drive.google.com', 'docs.google.com');
+            const idFromSrc = currentSrc.match(/(?:[?&]id=|\/d\/)([-_\w]+)/);
+            const fileId = idFromSrc && idFromSrc[1] ? idFromSrc[1] : "";
+            const rkFromSrc = currentSrc.match(/[?&]resourcekey=([^&]+)/);
+            const resourceKey = rkFromSrc && rkFromSrc[1] ? `&resourcekey=${rkFromSrc[1]}` : "";
+            if (fileId && currentSrc.includes('drive.usercontent.google.com')) {
+                audio.src = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
                 audio.play().catch(e => console.log("Retry play failed", e));
                 return;
             }
-            
-            // 2nd Retry: Switch docs.google.com -> lh3.googleusercontent.com
-            if (currentSrc.includes('docs.google.com') && currentSrc.includes('export=download')) {
-                console.log("Retrying with lh3.googleusercontent.com...");
-                const idMatch = currentSrc.match(/id=([-\w]+)/);
-                if (idMatch && idMatch[1]) {
-                    audio.src = `https://lh3.googleusercontent.com/d/${idMatch[1]}`;
-                    audio.play().catch(e => console.log("Retry play failed", e));
-                    return;
-                }
+            if (fileId && currentSrc.includes('drive.google.com') && currentSrc.includes('export=download')) {
+                audio.src = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                audio.play().catch(e => console.log("Retry play failed", e));
+                return;
+            }
+            if (fileId && currentSrc.includes('docs.google.com') && currentSrc.includes('export=download')) {
+                audio.src = `https://lh3.googleusercontent.com/d/${fileId}`;
+                audio.play().catch(e => console.log("Retry play failed", e));
+                return;
             }
 
             const error = audio.error;
@@ -972,13 +971,12 @@ class App {
         // If it's a data URI (Base64), return as is
         if (url.startsWith('data:')) return url;
 
-        // Handle Google Drive links (Robust ID extraction)
-        // Matches: drive.google.com... file/d/ID, uc?id=ID, open?id=ID
         const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
         const driveMatch = url.match(driveRegex);
         if (driveMatch && driveMatch[1]) {
-            // Reconstruct the direct link with confirm=t to bypass virus scan warning
-            return `https://drive.google.com/uc?export=download&confirm=t&id=${driveMatch[1]}`;
+            const resourceKeyMatch = url.match(/[?&]resourcekey=([^&]+)/);
+            const resourceKey = resourceKeyMatch && resourceKeyMatch[1] ? `&resourcekey=${resourceKeyMatch[1]}` : "";
+            return `https://drive.usercontent.google.com/download?id=${driveMatch[1]}&export=download&confirm=t${resourceKey}`;
         }
         
         // Handle Dropbox links
@@ -1276,8 +1274,9 @@ window.app = new App();
             const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
             const driveMatch = src.match(driveRegex);
             if (driveMatch && driveMatch[1]) {
-                // Add confirm=t to attempt to bypass virus scan warning for medium sized files
-                finalSrc = `https://drive.google.com/uc?export=download&confirm=t&id=${driveMatch[1]}`;
+                const resourceKeyMatch = src.match(/[?&]resourcekey=([^&]+)/);
+                const resourceKey = resourceKeyMatch && resourceKeyMatch[1] ? `&resourcekey=${resourceKeyMatch[1]}` : "";
+                finalSrc = `https://drive.usercontent.google.com/download?id=${driveMatch[1]}&export=download&confirm=t${resourceKey}`;
             }
             
             // Handle Dropbox links
@@ -1291,30 +1290,30 @@ window.app = new App();
         
         // Error listener for the preview
         previewEl.onerror = () => {
-            // Retry Logic for Google Drive
             if (activeAudioMode === 'url' && src) {
                 const driveRegex = /(?:drive|docs)\.google\.com\/.*(?:file\/d\/|uc\?id=|open\?id=|id=)([-_\w]+)/;
                 const driveMatch = src.match(driveRegex);
                 if (driveMatch && driveMatch[1]) {
                     const fileId = driveMatch[1];
+                    const resourceKeyMatch = src.match(/[?&]resourcekey=([^&]+)/);
+                    const resourceKey = resourceKeyMatch && resourceKeyMatch[1] ? `&resourcekey=${resourceKeyMatch[1]}` : "";
                     const currentSrc = previewEl.src;
-                    
-                    // 1st Retry: Try docs.google.com with confirm=t
-                    if (currentSrc.includes('drive.google.com')) {
-                        console.log("Retrying with docs.google.com...");
-                        previewEl.src = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}`;
+
+                    if (currentSrc.includes('drive.usercontent.google.com')) {
+                        previewEl.src = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
                         return;
                     }
-                    
-                    // 2nd Retry: Try lh3.googleusercontent.com
+
+                    if (currentSrc.includes('drive.google.com')) {
+                        previewEl.src = `https://docs.google.com/uc?export=download&confirm=t&id=${fileId}${resourceKey}`;
+                        return;
+                    }
+
                     if (currentSrc.includes('docs.google.com')) {
-                         console.log("Retrying with lh3.googleusercontent.com...");
                          previewEl.src = `https://lh3.googleusercontent.com/d/${fileId}`;
                          return;
                     }
                 }
-
-                // Show warning if all retries failed
                 const warning = document.getElementById('urlWarning');
                 if(warning) warning.style.display = 'block';
             }
